@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Фильтр товаров</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--tg-theme-bg-color, #fff);
+      color: var(--tg-theme-text-color, #000);
+      padding: 16px;
+      padding-bottom: 100px;
+    }
+    
+    .search-box {
+      position: sticky;
+      top: 0;
+      background: var(--tg-theme-bg-color, #fff);
+      padding: 8px 0 16px;
+      z-index: 10;
+    }
+    
+    .search-input {
+      width: 100%;
+      padding: 12px 16px;
+      border: 1px solid var(--tg-theme-hint-color, #ccc);
+      border-radius: 12px;
+      font-size: 16px;
+      background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+      color: var(--tg-theme-text-color, #000);
+      outline: none;
+    }
+    
+    .search-input:focus {
+      border-color: var(--tg-theme-button-color, #3390ec);
+    }
+    
+    .controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    
+    .control-btn {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+      color: var(--tg-theme-text-color, #000);
+    }
+    
+    .control-btn:active {
+      opacity: 0.7;
+    }
+    
+    .items-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    
+    .item {
+      display: flex;
+      align-items: center;
+      padding: 12px 16px;
+      background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    
+    .item:active {
+      opacity: 0.7;
+    }
+    
+    .item.selected {
+      background: var(--tg-theme-button-color, #3390ec);
+      color: var(--tg-theme-button-text-color, #fff);
+    }
+    
+    .checkbox {
+      width: 22px;
+      height: 22px;
+      border: 2px solid var(--tg-theme-hint-color, #ccc);
+      border-radius: 6px;
+      margin-right: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    
+    .item.selected .checkbox {
+      background: #fff;
+      border-color: #fff;
+    }
+    
+    .checkbox::after {
+      content: '';
+      display: none;
+      width: 6px;
+      height: 10px;
+      border: solid var(--tg-theme-button-color, #3390ec);
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+    
+    .item.selected .checkbox::after {
+      display: block;
+    }
+    
+    .item-name {
+      flex: 1;
+      font-size: 16px;
+    }
+    
+    .counter {
+      text-align: center;
+      padding: 8px;
+      color: var(--tg-theme-hint-color, #999);
+      font-size: 14px;
+    }
+    
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: var(--tg-theme-hint-color, #999);
+    }
+    
+    .error {
+      text-align: center;
+      padding: 40px;
+      color: #e53935;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="loading">Загрузка...</div>
+  </div>
+
+  <script>
+    // ========== КОНФИГУРАЦИЯ ==========
+    const API_URL = 'https://n8n.reposta.ru/webhook';
+    // ==================================
+    
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+    
+    let allItems = [];
+    let selectedItems = new Set();
+    let initialSelected = new Set();
+    let chat_id = null;
+    
+    // Получаем chat_id из Telegram
+    try {
+      const initData = tg.initDataUnsafe;
+      chat_id = initData?.user?.id;
+    } catch (e) {
+      console.error('Error getting chat_id:', e);
+    }
+    
+    // Загрузка данных
+    async function loadItems() {
+      try {
+        const response = await fetch(`${API_URL}/get_tovars?chat_id=${chat_id}`);
+        const data = await response.json();
+        
+        allItems = data.tovars || [];
+        selectedItems = new Set(data.selected || []);
+        initialSelected = new Set(data.selected || []);
+        
+        renderApp();
+      } catch (error) {
+        console.error('Error loading tovars:', error);
+        document.getElementById('app').innerHTML = `
+          <div class="error">Ошибка загрузки.<br>Попробуйте позже.</div>
+        `;
+      }
+    }
+    
+    // Сохранение данных
+    async function saveItems() {
+      try {
+        tg.MainButton.showProgress();
+        
+        const response = await fetch(`${API_URL}/save_tovars`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chat_id,
+            tovars: JSON.stringify([...selectedItems])
+          })
+        });
+        
+        if (response.ok) {
+          tg.MainButton.hideProgress();
+          tg.showAlert('✅ Сохранено!', () => {
+            tg.close();
+          });
+        } else {
+          throw new Error('Save failed');
+        }
+      } catch (error) {
+        console.error('Error saving:', error);
+        tg.MainButton.hideProgress();
+        tg.showAlert('Ошибка сохранения. Попробуйте ещё раз.');
+      }
+    }
+    
+    // Рендер приложения
+    function renderApp() {
+      const app = document.getElementById('app');
+      
+      app.innerHTML = `
+        <div class="search-box">
+          <input type="text" class="search-input" placeholder="🔍 Поиск товара..." id="searchInput">
+        </div>
+        <div class="controls">
+          <button class="control-btn" id="selectAllBtn">Выбрать все</button>
+          <button class="control-btn" id="clearAllBtn">Сбросить</button>
+        </div>
+        <div class="counter">Выбрано: <span id="count">${selectedItems.size}</span> из ${allItems.length}</div>
+        <div class="items-list" id="itemsList"></div>
+      `;
+      
+      // Event listeners
+      document.getElementById('searchInput').addEventListener('input', (e) => {
+        filterItems(e.target.value);
+      });
+      
+      document.getElementById('selectAllBtn').addEventListener('click', selectAll);
+      document.getElementById('clearAllBtn').addEventListener('click', clearAll);
+      
+      renderItems(allItems);
+      updateMainButton();
+    }
+    
+    // Рендер списка товаров
+    function renderItems(items) {
+      const list = document.getElementById('itemsList');
+      
+      list.innerHTML = items.map(item => {
+        const escapedItem = item.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        return `
+          <div class="item ${selectedItems.has(item) ? 'selected' : ''}" data-item="${escapedItem}">
+            <div class="checkbox"></div>
+            <div class="item-name">${item}</div>
+          </div>
+        `;
+      }).join('');
+      
+      // Add click listeners
+      list.querySelectorAll('.item').forEach(el => {
+        el.addEventListener('click', () => {
+          const item = el.dataset.item.replace(/&quot;/g, '"');
+          toggleItem(item, el);
+        });
+      });
+    }
+    
+    // Переключение товара
+    function toggleItem(item, element) {
+      if (selectedItems.has(item)) {
+        selectedItems.delete(item);
+        element.classList.remove('selected');
+      } else {
+        selectedItems.add(item);
+        element.classList.add('selected');
+      }
+      
+      document.getElementById('count').textContent = selectedItems.size;
+      updateMainButton();
+    }
+    
+    // Выбрать все видимые
+    function selectAll() {
+      const visibleElements = document.querySelectorAll('.item');
+      visibleElements.forEach(el => {
+        const item = el.dataset.item.replace(/&quot;/g, '"');
+        selectedItems.add(item);
+        el.classList.add('selected');
+      });
+      document.getElementById('count').textContent = selectedItems.size;
+      updateMainButton();
+    }
+    
+    // Сбросить все
+    function clearAll() {
+      selectedItems.clear();
+      document.querySelectorAll('.item').forEach(el => {
+        el.classList.remove('selected');
+      });
+      document.getElementById('count').textContent = 0;
+      updateMainButton();
+    }
+    
+    // Фильтр по поиску
+    function filterItems(query) {
+      const filtered = allItems.filter(item => 
+        item.toLowerCase().includes(query.toLowerCase())
+      );
+      renderItems(filtered);
+    }
+    
+    // Проверка изменений
+    function hasChanges() {
+      if (selectedItems.size !== initialSelected.size) return true;
+      for (const item of selectedItems) {
+        if (!initialSelected.has(item)) return true;
+      }
+      return false;
+    }
+    
+    // Главная кнопка
+    function updateMainButton() {
+      const count = selectedItems.size;
+      tg.MainButton.setText(`Сохранить (${count})`);
+      
+      if (hasChanges()) {
+        tg.MainButton.show();
+        tg.MainButton.enable();
+      } else {
+        tg.MainButton.hide();
+      }
+    }
+    
+    // Обработчик главной кнопки
+    tg.MainButton.onClick(saveItems);
+    
+    // Запуск
+    if (chat_id) {
+      loadItems();
+    } else {
+      document.getElementById('app').innerHTML = `
+        <div class="error">Откройте приложение через Telegram</div>
+      `;
+    }
+  </script>
+</body>
+</html>
